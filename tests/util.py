@@ -1,4 +1,7 @@
 """Test utilities."""
+import os
+import subprocess
+import sys
 import unittest
 import bs4
 import textwrap
@@ -23,6 +26,19 @@ XHTML = 0x4
 XML = 0x8
 PYHTML = 0x10
 LXML_HTML = 0x20
+
+# Compile a selector (read from `stdin`) in a separate process and report whether it
+# failed with a `SelectorSyntaxError`. Running in a separate process allows a pathological
+# pattern to be stopped with a timeout on all platforms (`signal.alarm` is not available on Windows).
+COMPILE_SYNTAX_ERROR_SCRIPT = """
+import sys
+import soupsieve as sv
+try:
+    sv.compile(sys.stdin.read())
+except sv.SelectorSyntaxError:
+    sys.exit(0)
+sys.exit(2)
+"""
 
 
 def skip_no_lxml(func):
@@ -102,6 +118,24 @@ class TestCase(unittest.TestCase):
         print('----Running Assert Test----')
         with self.assertRaises(exception):
             self.compile_pattern(pattern, namespaces=namespace, custom=custom)
+
+    def assert_syntax_error_no_timeout(self, pattern, timeout=10):
+        """Assert pattern fails for syntax error, not timeout error."""
+
+        print('----Running Assert Timeout Test----')
+        try:
+            result = subprocess.run(
+                [sys.executable, '-c', COMPILE_SYNTAX_ERROR_SCRIPT],
+                input=pattern,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                universal_newlines=True,
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(sv.__file__))),
+                timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            self.fail('Compiling the pattern did not finish within {} seconds'.format(timeout))
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def assert_selector(self, markup, selectors, expected_ids, namespaces={}, custom=None, flags=0):
         """Assert selector."""
